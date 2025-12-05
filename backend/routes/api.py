@@ -50,26 +50,26 @@ def health_check():
 def weekly_screener():
     """
     Run weekly screener (Screen 1)
-    
+
     Request body:
         market: 'US' or 'IN'
         watchlist_id: (optional) specific watchlist to scan
-    
+
     Returns:
         Complete scan results with all stocks and indicators
     """
     data = request.get_json() or {}
     market = data.get('market', 'US')
     watchlist_id = data.get('watchlist_id')
-    
+
     db = get_db()
     user_id = get_user_id()
-    
+
     # Get symbols from watchlist
     symbols = None
     if watchlist_id:
         watchlist = db.execute(
-            'SELECT symbols FROM watchlists WHERE id = ?', 
+            'SELECT symbols FROM watchlists WHERE id = ?',
             (watchlist_id,)
         ).fetchone()
         if watchlist:
@@ -82,15 +82,15 @@ def weekly_screener():
         ''', (user_id, market)).fetchone()
         if watchlist:
             symbols = json.loads(watchlist['symbols'])
-    
+
     # Run the screener
     results = run_weekly_screen(market, symbols)
-    
+
     # Calculate week boundaries
     today = datetime.now().date()
     week_start = today - timedelta(days=today.weekday())
     week_end = week_start + timedelta(days=6)
-    
+
     # Save scan to database
     db.execute('''
         INSERT INTO weekly_scans 
@@ -102,12 +102,12 @@ def weekly_screener():
         json.dumps(results['summary'])
     ))
     db.commit()
-    
+
     scan_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
     results['scan_id'] = scan_id
     results['week_start'] = week_start.isoformat()
     results['week_end'] = week_end.isoformat()
-    
+
     return jsonify(results)
 
 
@@ -115,38 +115,38 @@ def weekly_screener():
 def daily_screener():
     """
     Run daily screener (Screen 2) on weekly results
-    
+
     Request body:
         weekly_scan_id: ID of weekly scan to use
-    
+
     Returns:
         Daily screen results filtered from weekly
     """
     data = request.get_json() or {}
     weekly_scan_id = data.get('weekly_scan_id')
-    
+
     if not weekly_scan_id:
         return jsonify({'error': 'weekly_scan_id required'}), 400
-    
+
     db = get_db()
     user_id = get_user_id()
-    
+
     # Get weekly scan results
     weekly_scan = db.execute(
         'SELECT * FROM weekly_scans WHERE id = ?',
         (weekly_scan_id,)
     ).fetchone()
-    
+
     if not weekly_scan:
         return jsonify({'error': 'Weekly scan not found'}), 404
-    
+
     # Get stocks that passed weekly screen
     weekly_results = json.loads(weekly_scan['results'])
     bullish_stocks = [r for r in weekly_results if r.get('weekly_bullish')]
-    
+
     # Run daily screen
     results = run_daily_screen(bullish_stocks)
-    
+
     # Save to database
     today = datetime.now().date()
     db.execute('''
@@ -158,11 +158,11 @@ def daily_screener():
         today, json.dumps(results['all_results'])
     ))
     db.commit()
-    
+
     scan_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
     results['scan_id'] = scan_id
     results['weekly_scan_id'] = weekly_scan_id
-    
+
     return jsonify(results)
 
 
@@ -243,7 +243,7 @@ def get_pattern_catalog():
 @api.route('/patterns/bullish', methods=['GET'])
 def get_bullish_patterns():
     """Get bullish candlestick patterns only"""
-    bullish = {k: v for k, v in CANDLESTICK_PATTERNS.items() 
+    bullish = {k: v for k, v in CANDLESTICK_PATTERNS.items()
                if 'bullish' in v.get('type', '')}
     return jsonify(bullish)
 
@@ -251,7 +251,7 @@ def get_bullish_patterns():
 @api.route('/patterns/bearish', methods=['GET'])
 def get_bearish_patterns():
     """Get bearish candlestick patterns only"""
-    bearish = {k: v for k, v in CANDLESTICK_PATTERNS.items() 
+    bearish = {k: v for k, v in CANDLESTICK_PATTERNS.items()
                if 'bearish' in v.get('type', '')}
     return jsonify(bearish)
 
@@ -260,19 +260,19 @@ def get_bearish_patterns():
 def get_latest_weekly():
     """Get latest weekly scan for current week"""
     market = request.args.get('market', 'US')
-    
+
     today = datetime.now().date()
     week_start = today - timedelta(days=today.weekday())
-    
+
     db = get_db()
     user_id = get_user_id()
-    
+
     scan = db.execute('''
         SELECT * FROM weekly_scans 
         WHERE user_id = ? AND market = ? AND week_start = ?
         ORDER BY created_at DESC LIMIT 1
     ''', (user_id, market, week_start)).fetchone()
-    
+
     if scan:
         return jsonify({
             'scan_id': scan['id'],
@@ -283,7 +283,7 @@ def get_latest_weekly():
             'results': json.loads(scan['results']),
             'summary': json.loads(scan['summary']) if scan['summary'] else None
         })
-    
+
     return jsonify({'message': 'No weekly scan found for current week'}), 404
 
 
@@ -303,12 +303,12 @@ def get_settings():
     """Get all account settings"""
     db = get_db()
     user_id = get_user_id()
-    
+
     settings = db.execute(
         'SELECT * FROM account_settings WHERE user_id = ?',
         (user_id,)
     ).fetchall()
-    
+
     return jsonify([dict(s) for s in settings])
 
 
@@ -318,7 +318,7 @@ def create_setting():
     data = request.get_json()
     db = get_db()
     user_id = get_user_id()
-    
+
     db.execute('''
         INSERT INTO account_settings 
         (user_id, account_name, market, trading_capital, risk_per_trade,
@@ -331,7 +331,7 @@ def create_setting():
         data['currency'], data.get('broker')
     ))
     db.commit()
-    
+
     return jsonify({'message': 'Setting created', 'id': db.execute('SELECT last_insert_rowid()').fetchone()[0]})
 
 
@@ -341,7 +341,7 @@ def update_setting(id):
     data = request.get_json()
     db = get_db()
     user_id = get_user_id()
-    
+
     db.execute('''
         UPDATE account_settings 
         SET account_name = ?, trading_capital = ?, risk_per_trade = ?,
@@ -354,7 +354,7 @@ def update_setting(id):
         data['currency'], data.get('broker'), id, user_id
     ))
     db.commit()
-    
+
     return jsonify({'message': 'Setting updated'})
 
 
@@ -364,27 +364,27 @@ def get_strategies():
     """Get all strategies with APGAR parameters"""
     db = get_db()
     user_id = get_user_id()
-    
+
     strategies = db.execute(
         'SELECT * FROM strategies WHERE user_id = ?',
         (user_id,)
     ).fetchall()
-    
+
     result = []
     for s in strategies:
         strategy = dict(s)
         strategy['config'] = json.loads(strategy['config'])
-        
+
         params = db.execute('''
             SELECT * FROM apgar_parameters 
             WHERE strategy_id = ? ORDER BY display_order
         ''', (s['id'],)).fetchall()
-        
+
         strategy['apgar_parameters'] = [
             {**dict(p), 'options': json.loads(p['options'])} for p in params
         ]
         result.append(strategy)
-    
+
     return jsonify(result)
 
 
@@ -394,12 +394,12 @@ def get_watchlists():
     """Get all watchlists"""
     db = get_db()
     user_id = get_user_id()
-    
+
     watchlists = db.execute(
         'SELECT * FROM watchlists WHERE user_id = ?',
         (user_id,)
     ).fetchall()
-    
+
     return jsonify([
         {**dict(w), 'symbols': json.loads(w['symbols'])} for w in watchlists
     ])
@@ -411,13 +411,13 @@ def create_watchlist():
     data = request.get_json()
     db = get_db()
     user_id = get_user_id()
-    
+
     db.execute('''
         INSERT INTO watchlists (user_id, name, market, symbols, is_default)
         VALUES (?, ?, ?, ?, ?)
     ''', (user_id, data['name'], data['market'], json.dumps(data['symbols']), 0))
     db.commit()
-    
+
     return jsonify({'message': 'Watchlist created'})
 
 
@@ -428,7 +428,7 @@ def get_setups():
     status = request.args.get('status', 'pending')
     db = get_db()
     user_id = get_user_id()
-    
+
     setups = db.execute('''
         SELECT ts.*, s.name as strategy_name 
         FROM trade_setups ts
@@ -436,9 +436,9 @@ def get_setups():
         WHERE ts.user_id = ? AND ts.status = ?
         ORDER BY ts.created_at DESC
     ''', (user_id, status)).fetchall()
-    
+
     return jsonify([
-        {**dict(s), 'apgar_details': json.loads(s['apgar_details'] or '{}')} 
+        {**dict(s), 'apgar_details': json.loads(s['apgar_details'] or '{}')}
         for s in setups
     ])
 
@@ -449,7 +449,7 @@ def create_setup():
     data = request.get_json()
     db = get_db()
     user_id = get_user_id()
-    
+
     db.execute('''
         INSERT INTO trade_setups 
         (user_id, daily_scan_id, symbol, market, strategy_id, apgar_score,
@@ -464,7 +464,7 @@ def create_setup():
         data.get('position_size'), data.get('risk_amount'), 'pending'
     ))
     db.commit()
-    
+
     return jsonify({'message': 'Setup created', 'id': db.execute('SELECT last_insert_rowid()').fetchone()[0]})
 
 
@@ -474,10 +474,10 @@ def get_journal():
     """Get trade journal entries"""
     status = request.args.get('status')
     limit = request.args.get('limit', 50, type=int)
-    
+
     db = get_db()
     user_id = get_user_id()
-    
+
     if status:
         entries = db.execute('''
             SELECT * FROM trade_journal
@@ -490,7 +490,7 @@ def get_journal():
             WHERE user_id = ?
             ORDER BY created_at DESC LIMIT ?
         ''', (user_id, limit)).fetchall()
-    
+
     return jsonify([dict(e) for e in entries])
 
 
@@ -500,7 +500,7 @@ def create_journal_entry():
     data = request.get_json()
     db = get_db()
     user_id = get_user_id()
-    
+
     db.execute('''
         INSERT INTO trade_journal 
         (user_id, symbol, market, direction, entry_date, entry_price,
@@ -514,7 +514,7 @@ def create_journal_entry():
         data.get('apgar_score'), data.get('notes'), 'open'
     ))
     db.commit()
-    
+
     return jsonify({'message': 'Entry created', 'id': db.execute('SELECT last_insert_rowid()').fetchone()[0]})
 
 
@@ -524,28 +524,28 @@ def update_journal_entry(id):
     data = request.get_json()
     db = get_db()
     user_id = get_user_id()
-    
+
     entry = db.execute(
         'SELECT * FROM trade_journal WHERE id = ? AND user_id = ?',
         (id, user_id)
     ).fetchone()
-    
+
     if not entry:
         return jsonify({'error': 'Entry not found'}), 404
-    
+
     # Calculate P&L if closing
     pnl = pnl_percent = None
     if data.get('status') == 'closed' and data.get('exit_price'):
         exit_price = data['exit_price']
         entry_price = entry['entry_price']
         position_size = entry['position_size']
-        
+
         pnl = (exit_price - entry_price) * position_size
         if entry['direction'] == 'SHORT':
             pnl = -pnl
         pnl -= data.get('fees', 0)
         pnl_percent = (pnl / (entry_price * position_size)) * 100
-    
+
     db.execute('''
         UPDATE trade_journal 
         SET exit_date = ?, exit_price = ?, pnl = ?, pnl_percent = ?,
@@ -558,7 +558,7 @@ def update_journal_entry(id):
         data.get('grade'), data.get('status', entry['status']), id, user_id
     ))
     db.commit()
-    
+
     return jsonify({'message': 'Entry updated', 'pnl': pnl, 'pnl_percent': pnl_percent})
 
 
@@ -566,18 +566,18 @@ def update_journal_entry(id):
 def get_journal_stats():
     """Get trading statistics"""
     period = request.args.get('period', 'all')
-    
+
     db = get_db()
     user_id = get_user_id()
-    
+
     where = 'WHERE user_id = ? AND status = ?'
     params = [user_id, 'closed']
-    
+
     if period == 'month':
         where += ' AND exit_date >= date("now", "-30 days")'
     elif period == 'year':
         where += ' AND exit_date >= date("now", "-365 days")'
-    
+
     stats = db.execute(f'''
         SELECT 
             COUNT(*) as total_trades,
@@ -589,13 +589,13 @@ def get_journal_stats():
             MIN(pnl) as worst_trade
         FROM trade_journal {where}
     ''', params).fetchone()
-    
+
     result = dict(stats)
     result['win_rate'] = (
-        (result['winning_trades'] / result['total_trades'] * 100) 
+        (result['winning_trades'] / result['total_trades'] * 100)
         if result['total_trades'] > 0 else 0
     )
-    
+
     return jsonify(result)
 
 
@@ -606,19 +606,19 @@ def get_checklist():
     today = datetime.now().date()
     db = get_db()
     user_id = get_user_id()
-    
+
     checklist = db.execute('''
         SELECT * FROM daily_checklist 
         WHERE user_id = ? AND checklist_date = ?
     ''', (user_id, today)).fetchone()
-    
+
     if checklist:
         return jsonify({
             'date': checklist['checklist_date'],
             'items': json.loads(checklist['items']),
             'completed': checklist['completed_at'] is not None
         })
-    
+
     default_items = {f'step{i}': False for i in range(1, 8)}
     return jsonify({
         'date': today.isoformat(),
@@ -634,15 +634,15 @@ def update_checklist():
     today = datetime.now().date()
     db = get_db()
     user_id = get_user_id()
-    
+
     all_done = all(data['items'].values())
     completed_at = datetime.now() if all_done else None
-    
+
     db.execute('''
         INSERT OR REPLACE INTO daily_checklist 
         (user_id, checklist_date, items, completed_at)
         VALUES (?, ?, ?, ?)
     ''', (user_id, today, json.dumps(data['items']), completed_at))
     db.commit()
-    
+
     return jsonify({'message': 'Checklist updated', 'completed': all_done})
