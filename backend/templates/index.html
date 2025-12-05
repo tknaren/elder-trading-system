@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elder Trading System</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        dark: { 900: '#0a0f1a', 800: '#111827', 700: '#1f2937', 600: '#151d2e' }
+                    },
+                    fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background: #0a0f1a; }
+        .bg-grid { background-image: linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px); background-size: 50px 50px; }
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .animate-pulse-dot { animation: pulse-dot 2s infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
+    </style>
+</head>
+<body class="bg-dark-900 text-gray-100 min-h-screen">
+    <div class="bg-grid fixed inset-0 pointer-events-none"></div>
+    
+    <div id="app" class="relative z-10 flex min-h-screen">
+        <!-- Sidebar -->
+        <aside class="w-64 bg-dark-800 border-r border-gray-700 flex flex-col">
+            <div class="p-6 border-b border-gray-700">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center text-xl shadow-lg shadow-blue-500/30">📈</div>
+                    <div>
+                        <h1 class="font-bold text-lg">Elder Trading</h1>
+                        <p class="text-xs text-gray-500 font-mono">Triple Screen System</p>
+                    </div>
+                </div>
+            </div>
+            <nav class="flex-1 p-4">
+                <ul class="space-y-2" id="nav-menu"></ul>
+            </nav>
+            <div class="p-4 border-t border-gray-700">
+                <div class="flex items-center gap-2 text-xs text-green-400">
+                    <div class="w-2 h-2 bg-green-400 rounded-full animate-pulse-dot"></div>
+                    <span>Yahoo Finance Connected</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col">
+            <!-- Header -->
+            <header class="h-16 bg-dark-800 border-b border-gray-700 px-6 flex items-center justify-between">
+                <div class="flex items-center gap-6" id="stats-bar"></div>
+                <select id="market-selector" class="bg-dark-700 border border-gray-600 rounded-lg px-3 py-2 text-sm">
+                    <option value="US">🇺🇸 US Market</option>
+                    <option value="IN">🇮🇳 Indian Market</option>
+                </select>
+            </header>
+
+            <!-- Content Area -->
+            <div class="flex-1 p-6 overflow-auto" id="content-area"></div>
+        </main>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+
+    <!-- Modal Container -->
+    <div id="modal-container" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden items-center justify-center"></div>
+
+    <script>
+        // ============ STATE ============
+        const API_BASE = '/api';
+        let currentTab = 'checklist';
+        let settings = [];
+        let strategies = [];
+        let checklist = {};
+        let weeklyResults = [];
+        let dailyResults = [];
+        let weeklyScanId = null;
+        let selectedStock = null;
+        let apgarScores = {};
+
+        const navItems = [
+            { id: 'checklist', label: 'Daily Checklist', icon: '📋' },
+            { id: 'screener', label: 'Screener', icon: '🔍' },
+            { id: 'apgar', label: 'Trade APGAR', icon: '📊' },
+            { id: 'journal', label: 'Trade Journal', icon: '📖' },
+            { id: 'settings', label: 'Settings', icon: '⚙️' }
+        ];
+
+        const checklistItems = [
+            { id: 'step1', title: 'Check Positions & Orders', desc: 'Review triggered orders, update trade log', time: '5 min', icon: '📋' },
+            { id: 'step2', title: 'Weekly Chart Scan (Screen 1)', desc: 'Check EMA slope + MACD-Histogram direction', time: '10 min', icon: '📅' },
+            { id: 'step3', title: 'Daily Chart Analysis (Screen 2)', desc: 'Force Index, Stochastic, price vs EMA', time: '15 min', icon: '📊' },
+            { id: 'step4', title: 'Calculate Entry/Stop/Target', desc: 'Use SafeZone method, verify R:R ≥ 1:2', time: '10 min', icon: '🎯' },
+            { id: 'step5', title: 'Position Size Calculation', desc: 'Shares = Max Risk ÷ (Entry - Stop)', time: '5 min', icon: '📐' },
+            { id: 'step6', title: 'Place Limit Orders', desc: 'Entry, stop-loss, and target orders', time: '5 min', icon: '💹' },
+            { id: 'step7', title: 'Update Trade Log & Diary', desc: 'Record all details in spreadsheet', time: '5 min', icon: '📝' }
+        ];
+
+        // ============ API FUNCTIONS ============
+        async function api(method, endpoint, data = null) {
+            const opts = { method, headers: { 'Content-Type': 'application/json' } };
+            if (data) opts.body = JSON.stringify(data);
+            const res = await fetch(API_BASE + endpoint, opts);
+            return res.json();
+        }
+
+        // ============ TOAST ============
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 ${
+                type === 'success' ? 'bg-green-500/20 border border-green-500 text-green-400' :
+                type === 'error' ? 'bg-red-500/20 border border-red-500 text-red-400' :
+                'bg-blue-500/20 border border-blue-500 text-blue-400'
+            }`;
+            toast.innerHTML = `<span>${message}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        // ============ RENDER FUNCTIONS ============
+        function renderNav() {
+            document.getElementById('nav-menu').innerHTML = navItems.map(item => `
+                <li>
+                    <button onclick="switchTab('${item.id}')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                        currentTab === item.id ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-gray-400 hover:bg-gray-700/50'
+                    }">
+                        <span class="text-xl">${item.icon}</span>
+                        <span class="font-medium">${item.label}</span>
+                    </button>
+                </li>
+            `).join('');
+        }
+
+        function renderStats() {
+            const account = settings[0] || { trading_capital: 6000, risk_per_trade: 2, currency: 'GBP' };
+            const symbol = account.currency === 'GBP' ? '£' : account.currency === 'INR' ? '₹' : '$';
+            const maxRisk = account.trading_capital * account.risk_per_trade / 100;
+            
+            document.getElementById('stats-bar').innerHTML = `
+                <div><p class="text-xs text-gray-500 uppercase tracking-wider">Capital</p><p class="font-mono font-bold text-blue-400">${symbol}${account.trading_capital.toLocaleString()}</p></div>
+                <div><p class="text-xs text-gray-500 uppercase tracking-wider">Max Risk (${account.risk_per_trade}%)</p><p class="font-mono font-bold text-red-400">${symbol}${maxRisk.toLocaleString()}</p></div>
+                <div><p class="text-xs text-gray-500 uppercase tracking-wider">Monthly P&L</p><p class="font-mono font-bold text-green-400">${symbol}0</p></div>
+            `;
+        }
+
+        function renderContent() {
+            const content = document.getElementById('content-area');
+            switch(currentTab) {
+                case 'checklist': content.innerHTML = renderChecklist(); break;
+                case 'screener': content.innerHTML = renderScreener(); break;
+                case 'apgar': content.innerHTML = renderApgar(); break;
+                case 'journal': content.innerHTML = renderJournal(); break;
+                case 'settings': content.innerHTML = renderSettings(); break;
+            }
+        }
+
+        function renderChecklist() {
+            const completedCount = Object.values(checklist).filter(Boolean).length;
+            const progress = (completedCount / 7) * 100;
+            
+            return `
+                <div class="space-y-6">
+                    <div class="flex items-center justify-between">
+                        <div><h2 class="text-2xl font-bold">Evening Analysis Workflow</h2><p class="text-gray-500">After 9:00 PM UK (US Market Close)</p></div>
+                        <div class="text-right"><p class="text-sm text-gray-500">Estimated Time</p><p class="text-xl font-mono font-bold text-blue-400">~45 min</p></div>
+                    </div>
+                    <div class="bg-dark-700 rounded-xl p-4">
+                        <div class="flex justify-between mb-2">
+                            <span class="text-sm text-gray-400">Daily Progress</span>
+                            <span class="text-sm font-mono text-green-400">${completedCount}/7 completed</span>
+                        </div>
+                        <div class="h-2 bg-dark-900 rounded-full overflow-hidden">
+                            <div class="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all" style="width: ${progress}%"></div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        ${checklistItems.map(item => `
+                            <div onclick="toggleChecklist('${item.id}')" class="p-4 rounded-xl border cursor-pointer transition-all ${
+                                checklist[item.id] ? 'bg-green-500/10 border-green-500/30 opacity-60' : 'bg-dark-700 border-gray-700 hover:border-blue-500/50'
+                            }">
+                                <div class="flex items-start gap-4">
+                                    <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${checklist[item.id] ? 'bg-green-500 border-green-500' : 'border-gray-500'}">
+                                        ${checklist[item.id] ? '<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
+                                    </div>
+                                    <div class="flex-1">
+                                        <div class="flex items-center gap-2"><span class="text-xl">${item.icon}</span><h3 class="font-semibold">${item.title}</h3></div>
+                                        <p class="text-sm text-gray-500 mt-1">${item.desc}</p>
+                                        <p class="text-xs text-blue-400 font-mono mt-2">⏱️ ${item.time}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderScreener() {
+            const results = weeklyResults;
+            return `
+                <div class="space-y-6">
+                    <div class="flex items-center justify-between">
+                        <div><h2 class="text-2xl font-bold">Triple Screen Scanner</h2><p class="text-gray-500">Yahoo Finance Real-Time Data</p></div>
+                    </div>
+                    <div class="flex items-center gap-4 flex-wrap">
+                        <button onclick="runWeeklyScan()" class="px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl font-semibold flex items-center gap-2 hover:shadow-lg hover:shadow-blue-500/30 transition-all">
+                            <span id="scan-spinner" class="hidden w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                            <span>▶</span> Run Weekly Scan
+                        </button>
+                        <button onclick="runDailyScan()" class="px-6 py-3 bg-dark-700 border border-gray-600 rounded-xl font-semibold hover:border-blue-500 transition-all ${!weeklyScanId ? 'opacity-50' : ''}">
+                            Run Daily Scan
+                        </button>
+                    </div>
+                    ${results.length > 0 ? `
+                        <div class="bg-dark-700 rounded-xl overflow-hidden">
+                            <table class="w-full">
+                                <thead>
+                                    <tr class="border-b border-gray-600">
+                                        <th class="text-left p-4 text-xs uppercase tracking-wider text-gray-500">Symbol</th>
+                                        <th class="text-left p-4 text-xs uppercase tracking-wider text-gray-500">Price</th>
+                                        <th class="text-left p-4 text-xs uppercase tracking-wider text-gray-500">Change</th>
+                                        <th class="text-left p-4 text-xs uppercase tracking-wider text-gray-500">Signal</th>
+                                        <th class="text-left p-4 text-xs uppercase tracking-wider text-gray-500">Grade</th>
+                                        <th class="text-left p-4 text-xs uppercase tracking-wider text-gray-500">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${results.map(s => `
+                                        <tr class="border-b border-gray-700/50 hover:bg-dark-600/50">
+                                            <td class="p-4"><div class="font-mono font-bold">${s.symbol}</div><div class="text-xs text-gray-500">${(s.name || '').substring(0, 20)}</div></td>
+                                            <td class="p-4 font-mono">$${s.price?.toFixed(2)}</td>
+                                            <td class="p-4 font-mono ${s.change >= 0 ? 'text-green-400' : 'text-red-400'}">${s.change >= 0 ? '+' : ''}${s.change?.toFixed(2)} (${s.changePercent?.toFixed(2)}%)</td>
+                                            <td class="p-4"><div class="flex items-center gap-2"><div class="w-16 h-1.5 bg-dark-900 rounded-full overflow-hidden"><div class="h-full rounded-full ${s.signalStrength >= 8 ? 'bg-green-500' : s.signalStrength >= 6 ? 'bg-yellow-500' : 'bg-red-500'}" style="width: ${s.signalStrength * 10}%"></div></div><span class="text-sm font-mono">${s.signalStrength}/10</span></div></td>
+                                            <td class="p-4"><span class="px-3 py-1 rounded-full text-xs font-bold ${s.grade === 'A' ? 'bg-green-500/20 text-green-400' : s.grade === 'B' ? 'bg-blue-500/20 text-blue-400' : 'bg-yellow-500/20 text-yellow-400'}">${s.grade}-Trade</span></td>
+                                            <td class="p-4"><button onclick="selectForApgar('${s.symbol}')" class="px-4 py-2 bg-dark-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-all">📋 APGAR</button></td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    ` : `
+                        <div class="text-center py-16 text-gray-500">
+                            <div class="text-6xl mb-4">🔍</div>
+                            <h3 class="text-xl font-semibold mb-2">Run the screener to find trades</h3>
+                            <p>The scanner will analyze stocks using Elder's Triple Screen methodology</p>
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        function renderApgar() {
+            if (!selectedStock) {
+                return `
+                    <div class="text-center py-16 text-gray-500">
+                        <div class="text-6xl mb-4">📋</div>
+                        <h3 class="text-xl font-semibold mb-2">Select a stock from the screener</h3>
+                        <p>Use the screener to find potential trades, then validate with APGAR</p>
+                    </div>
+                `;
+            }
+            
+            const s = selectedStock;
+            const totalScore = Object.values(apgarScores).reduce((a, b) => a + b, 0);
+            const account = settings[0] || { trading_capital: 6000, risk_per_trade: 2 };
+            const maxRisk = account.trading_capital * account.risk_per_trade / 100 * 1.27;
+            const entry = s.price;
+            const stop = s.suggestedStop;
+            const target = s.suggestedTarget;
+            const riskPerShare = entry - stop;
+            const shares = Math.floor(maxRisk / riskPerShare);
+            const rr = ((target - entry) / riskPerShare).toFixed(1);
+
+            const apgarParams = [
+                { id: 'weekly_ema', label: 'Weekly EMA (22) Slope', icon: '📅', options: [{ score: 2, label: 'Strongly Rising' }, { score: 1, label: 'Rising' }, { score: 0, label: 'Flat/Falling' }] },
+                { id: 'weekly_macd', label: 'Weekly MACD-Histogram', icon: '📊', options: [{ score: 2, label: 'Rising + Divergence' }, { score: 1, label: 'Rising' }, { score: 0, label: 'Falling' }] },
+                { id: 'force_index', label: 'Daily Force Index', icon: '💪', options: [{ score: 2, label: 'Below Zero + Uptick' }, { score: 1, label: 'Below Zero' }, { score: 0, label: 'Above Zero' }] },
+                { id: 'stochastic', label: 'Daily Stochastic', icon: '📈', options: [{ score: 2, label: 'Below 30' }, { score: 1, label: '30-50' }, { score: 0, label: 'Above 50' }] },
+                { id: 'price_ema', label: 'Price vs 22-Day EMA', icon: '💵', options: [{ score: 2, label: 'At/Below EMA' }, { score: 1, label: 'Slightly Above' }, { score: 0, label: 'Far Above' }] }
+            ];
+
+            return `
+                <div class="space-y-6">
+                    <div class="bg-dark-700 rounded-xl p-6">
+                        <div class="flex justify-between items-start">
+                            <div><h2 class="text-3xl font-bold font-mono">${s.symbol}</h2><p class="text-gray-500">${s.name}</p></div>
+                            <div class="text-right"><p class="text-3xl font-bold font-mono">$${s.price?.toFixed(2)}</p><p class="font-mono ${s.change >= 0 ? 'text-green-400' : 'text-red-400'}">${s.change >= 0 ? '+' : ''}${s.change?.toFixed(2)} (${s.changePercent?.toFixed(2)}%)</p></div>
+                        </div>
+                        <div class="grid grid-cols-6 gap-4 mt-6">
+                            <div class="bg-dark-600 p-3 rounded-lg text-center"><p class="text-xs text-gray-500">EMA 22</p><p class="font-mono font-bold">$${s.ema22?.toFixed(2)}</p></div>
+                            <div class="bg-dark-600 p-3 rounded-lg text-center"><p class="text-xs text-gray-500">MACD-H</p><p class="font-mono font-bold ${s.macdHistogram >= 0 ? 'text-green-400' : 'text-red-400'}">${s.macdHistogram?.toFixed(3)}</p></div>
+                            <div class="bg-dark-600 p-3 rounded-lg text-center"><p class="text-xs text-gray-500">Force Index</p><p class="font-mono font-bold ${s.forceIndex < 0 ? 'text-green-400' : 'text-red-400'}">${(s.forceIndex / 1000000)?.toFixed(2)}M</p></div>
+                            <div class="bg-dark-600 p-3 rounded-lg text-center"><p class="text-xs text-gray-500">Stochastic</p><p class="font-mono font-bold">${s.stochastic?.toFixed(1)}</p></div>
+                            <div class="bg-dark-600 p-3 rounded-lg text-center"><p class="text-xs text-gray-500">RSI</p><p class="font-mono font-bold">${s.rsi?.toFixed(1)}</p></div>
+                            <div class="bg-dark-600 p-3 rounded-lg text-center"><p class="text-xs text-gray-500">ATR</p><p class="font-mono font-bold">$${s.atr?.toFixed(2)}</p></div>
+                        </div>
+                    </div>
+
+                    ${apgarParams.map(param => `
+                        <div class="space-y-3">
+                            <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">${param.icon} ${param.label}</h3>
+                            <div class="grid grid-cols-3 gap-3">
+                                ${param.options.map(opt => `
+                                    <button onclick="setApgarScore('${param.id}', ${opt.score})" class="p-4 rounded-xl border-2 text-center transition-all ${apgarScores[param.id] === opt.score ? 'border-green-500 bg-green-500/10' : 'border-gray-700 bg-dark-700 hover:border-blue-500'}">
+                                        <div class="text-2xl font-bold text-green-400">+${opt.score}</div>
+                                        <div class="text-xs text-gray-500 mt-1">${opt.label}</div>
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `).join('')}
+
+                    <div class="bg-dark-700 rounded-xl p-6 text-center">
+                        <p class="text-xs text-gray-500 uppercase tracking-wider">Total APGAR Score</p>
+                        <p class="text-6xl font-bold font-mono my-4 ${totalScore >= 8 ? 'text-green-400' : totalScore >= 6 ? 'text-blue-400' : totalScore >= 4 ? 'text-yellow-400' : 'text-red-400'}">${totalScore}</p>
+                        <p class="font-bold ${totalScore >= 8 ? 'text-green-400' : totalScore >= 6 ? 'text-blue-400' : totalScore >= 4 ? 'text-yellow-400' : 'text-red-400'}">
+                            ${totalScore >= 8 ? '🎯 EXCELLENT - Strong A-Trade!' : totalScore >= 6 ? '✅ GOOD - Valid B-Trade' : totalScore >= 4 ? '⚠️ FAIR - Consider waiting' : '❌ POOR - Do NOT trade'}
+                        </p>
+                    </div>
+
+                    <div class="bg-dark-700 rounded-xl p-6">
+                        <h3 class="font-bold mb-4">📐 Position Sizing</h3>
+                        <div class="grid grid-cols-3 gap-4">
+                            <div class="bg-dark-600 p-4 rounded-lg"><p class="text-xs text-gray-500">Entry</p><p class="font-mono font-bold text-lg">$${entry?.toFixed(2)}</p></div>
+                            <div class="bg-dark-600 p-4 rounded-lg"><p class="text-xs text-gray-500">Stop Loss</p><p class="font-mono font-bold text-lg text-red-400">$${stop?.toFixed(2)}</p></div>
+                            <div class="bg-dark-600 p-4 rounded-lg"><p class="text-xs text-gray-500">Target</p><p class="font-mono font-bold text-lg text-green-400">$${target?.toFixed(2)}</p></div>
+                            <div class="bg-green-500/10 border border-green-500 p-4 rounded-lg"><p class="text-xs text-gray-500">Position Size</p><p class="font-mono font-bold text-lg text-green-400">${shares} shares</p></div>
+                            <div class="bg-green-500/10 border border-green-500 p-4 rounded-lg"><p class="text-xs text-gray-500">Position Value</p><p class="font-mono font-bold text-lg text-green-400">$${(shares * entry).toLocaleString()}</p></div>
+                            <div class="bg-green-500/10 border border-green-500 p-4 rounded-lg"><p class="text-xs text-gray-500">Risk:Reward</p><p class="font-mono font-bold text-lg ${rr >= 2 ? 'text-green-400' : 'text-yellow-400'}">1:${rr}</p></div>
+                        </div>
+                        <button onclick="saveTrade()" class="w-full mt-6 py-4 bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl font-bold text-lg hover:shadow-lg hover:shadow-green-500/30 transition-all">✅ Save Trade Setup</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderJournal() {
+            return `
+                <div class="space-y-6">
+                    <div class="flex items-center justify-between">
+                        <div><h2 class="text-2xl font-bold">Trade Journal</h2><p class="text-gray-500">Track your trading performance</p></div>
+                        <button onclick="loadJournal()" class="px-4 py-2 bg-dark-700 border border-gray-600 rounded-lg hover:border-blue-500">🔄 Refresh</button>
+                    </div>
+                    <div id="journal-entries" class="space-y-4">
+                        <div class="text-center py-16 text-gray-500">
+                            <div class="text-6xl mb-4">📖</div>
+                            <h3 class="text-xl font-semibold mb-2">No trades recorded yet</h3>
+                            <p>Complete trades will appear here with full P&L tracking</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSettings() {
+            const account = settings[0] || { account_name: 'ISA Account', trading_capital: 6000, risk_per_trade: 2, max_monthly_drawdown: 6, target_rr: 2, currency: 'GBP' };
+            return `
+                <div class="space-y-6">
+                    <div><h2 class="text-2xl font-bold">Account Settings</h2><p class="text-gray-500">Configure your trading parameters</p></div>
+                    <div class="bg-dark-700 rounded-xl p-6">
+                        <div class="grid grid-cols-2 gap-6">
+                            <div><label class="text-xs text-gray-500 uppercase tracking-wider">Account Name</label><input type="text" id="set-name" value="${account.account_name}" class="w-full mt-2 px-4 py-3 bg-dark-600 border border-gray-600 rounded-lg focus:border-blue-500 focus:outline-none"></div>
+                            <div><label class="text-xs text-gray-500 uppercase tracking-wider">Trading Capital</label><input type="number" id="set-capital" value="${account.trading_capital}" class="w-full mt-2 px-4 py-3 bg-dark-600 border border-gray-600 rounded-lg focus:border-blue-500 focus:outline-none font-mono"></div>
+                            <div><label class="text-xs text-gray-500 uppercase tracking-wider">Risk Per Trade (%)</label><input type="number" id="set-risk" value="${account.risk_per_trade}" step="0.5" class="w-full mt-2 px-4 py-3 bg-dark-600 border border-gray-600 rounded-lg focus:border-blue-500 focus:outline-none font-mono"></div>
+                            <div><label class="text-xs text-gray-500 uppercase tracking-wider">Max Monthly Drawdown (%)</label><input type="number" id="set-drawdown" value="${account.max_monthly_drawdown}" class="w-full mt-2 px-4 py-3 bg-dark-600 border border-gray-600 rounded-lg focus:border-blue-500 focus:outline-none font-mono"></div>
+                            <div><label class="text-xs text-gray-500 uppercase tracking-wider">Target R:R Ratio</label><input type="number" id="set-rr" value="${account.target_rr}" step="0.5" class="w-full mt-2 px-4 py-3 bg-dark-600 border border-gray-600 rounded-lg focus:border-blue-500 focus:outline-none font-mono"></div>
+                            <div><label class="text-xs text-gray-500 uppercase tracking-wider">Currency</label><select id="set-currency" class="w-full mt-2 px-4 py-3 bg-dark-600 border border-gray-600 rounded-lg focus:border-blue-500 focus:outline-none">
+                                <option value="GBP" ${account.currency === 'GBP' ? 'selected' : ''}>£ GBP</option>
+                                <option value="USD" ${account.currency === 'USD' ? 'selected' : ''}>$ USD</option>
+                                <option value="INR" ${account.currency === 'INR' ? 'selected' : ''}>₹ INR</option>
+                            </select></div>
+                        </div>
+                        <button onclick="saveSettings()" class="mt-6 px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl font-semibold hover:shadow-lg hover:shadow-blue-500/30 transition-all">💾 Save Settings</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============ ACTION FUNCTIONS ============
+        function switchTab(tab) {
+            currentTab = tab;
+            renderNav();
+            renderContent();
+        }
+
+        async function toggleChecklist(id) {
+            checklist[id] = !checklist[id];
+            await api('POST', '/checklist', { items: checklist });
+            renderContent();
+            if (checklist[id]) showToast('Step completed! ✓', 'success');
+        }
+
+        async function runWeeklyScan() {
+            document.getElementById('scan-spinner')?.classList.remove('hidden');
+            const market = document.getElementById('market-selector').value;
+            try {
+                const data = await api('POST', '/screener/weekly', { market });
+                weeklyResults = data.results || [];
+                weeklyScanId = data.scan_id;
+                showToast(`Found ${weeklyResults.filter(r => r.grade === 'A').length} A-Trades!`, 'success');
+            } catch (e) {
+                showToast('Scan failed: ' + e.message, 'error');
+            }
+            document.getElementById('scan-spinner')?.classList.add('hidden');
+            renderContent();
+        }
+
+        async function runDailyScan() {
+            if (!weeklyScanId) { showToast('Run weekly scan first', 'error'); return; }
+            const data = await api('POST', '/screener/daily', { weekly_scan_id: weeklyScanId });
+            dailyResults = data.results || [];
+            weeklyResults = dailyResults;
+            showToast(`Daily scan complete: ${dailyResults.length} stocks`, 'success');
+            renderContent();
+        }
+
+        function selectForApgar(symbol) {
+            selectedStock = weeklyResults.find(s => s.symbol === symbol);
+            apgarScores = {};
+            switchTab('apgar');
+        }
+
+        function setApgarScore(id, score) {
+            apgarScores[id] = score;
+            renderContent();
+        }
+
+        async function saveTrade() {
+            const total = Object.values(apgarScores).reduce((a, b) => a + b, 0);
+            if (Object.keys(apgarScores).length < 5) { showToast('Complete all APGAR sections', 'error'); return; }
+            if (total < 6 && !confirm('APGAR score is low. Save anyway?')) return;
+            
+            const account = settings[0] || { trading_capital: 6000, risk_per_trade: 2 };
+            const maxRisk = account.trading_capital * account.risk_per_trade / 100 * 1.27;
+            const riskPerShare = selectedStock.price - selectedStock.suggestedStop;
+            const shares = Math.floor(maxRisk / riskPerShare);
+            
+            await api('POST', '/setups', {
+                daily_scan_id: 1,
+                symbol: selectedStock.symbol,
+                market: document.getElementById('market-selector').value,
+                strategy_id: 1,
+                apgar_score: total,
+                apgar_details: apgarScores,
+                entry_price: selectedStock.price,
+                stop_loss: selectedStock.suggestedStop,
+                target_price: selectedStock.suggestedTarget,
+                position_size: shares,
+                risk_amount: maxRisk
+            });
+            
+            showToast(`${selectedStock.symbol} saved to trade setups!`, 'success');
+            selectedStock = null;
+            apgarScores = {};
+            switchTab('screener');
+        }
+
+        async function saveSettings() {
+            const data = {
+                account_name: document.getElementById('set-name').value,
+                trading_capital: parseFloat(document.getElementById('set-capital').value),
+                risk_per_trade: parseFloat(document.getElementById('set-risk').value),
+                max_monthly_drawdown: parseFloat(document.getElementById('set-drawdown').value),
+                target_rr: parseFloat(document.getElementById('set-rr').value),
+                currency: document.getElementById('set-currency').value,
+                market: document.getElementById('market-selector').value
+            };
+            
+            if (settings[0]?.id) {
+                await api('PUT', `/settings/${settings[0].id}`, data);
+            } else {
+                await api('POST', '/settings', data);
+            }
+            
+            await loadSettings();
+            showToast('Settings saved!', 'success');
+            renderStats();
+        }
+
+        // ============ DATA LOADING ============
+        async function loadSettings() {
+            settings = await api('GET', '/settings');
+        }
+
+        async function loadChecklist() {
+            const data = await api('GET', '/checklist');
+            checklist = data.items || {};
+        }
+
+        async function loadStrategies() {
+            strategies = await api('GET', '/strategies');
+        }
+
+        // ============ INIT ============
+        async function init() {
+            await Promise.all([loadSettings(), loadChecklist(), loadStrategies()]);
+            renderNav();
+            renderStats();
+            renderContent();
+        }
+
+        init();
+    </script>
+</body>
+</html>
