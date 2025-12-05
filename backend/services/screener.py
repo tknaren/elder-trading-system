@@ -5,7 +5,8 @@ Implements the Triple Screen methodology for stock screening
 Features:
 - Weekly Screen (Screen 1): Trend identification
 - Daily Screen (Screen 2): Entry timing
-- Signal strength scoring
+- Signal strength scoring with configurable indicators
+- Candlestick pattern recognition
 - Transparent grading with explanations
 """
 
@@ -18,6 +19,13 @@ from .indicators import (
     calculate_ema,
     calculate_macd,
     get_grading_criteria
+)
+from .candlestick_patterns import scan_patterns, get_bullish_patterns, get_pattern_score
+from .indicator_config import (
+    INDICATOR_CATALOG,
+    DEFAULT_INDICATOR_CONFIG,
+    get_indicator_info,
+    get_config_summary
 )
 
 
@@ -138,7 +146,7 @@ def analyze_weekly_trend(hist: pd.DataFrame) -> Dict:
     }
 
 
-def calculate_signal_strength(indicators: Dict, weekly: Dict) -> Dict:
+def calculate_signal_strength(indicators: Dict, weekly: Dict, patterns: list = None) -> Dict:
     """
     Calculate signal strength score based on Elder criteria
     
@@ -152,15 +160,20 @@ def calculate_signal_strength(indicators: Dict, weekly: Dict) -> Dict:
     +1: Price at/below 22-EMA
     +2: Bullish divergence
     +1: Impulse GREEN
+    +1: Bullish candlestick pattern (bonus)
     -2: Impulse RED (penalty)
     
     Args:
         indicators: Daily indicator values
         weekly: Weekly trend analysis
+        patterns: Detected candlestick patterns
     
     Returns:
         Dictionary with score, breakdown, and signals
     """
+    if patterns is None:
+        patterns = []
+    
     score = 0
     signals = []
     breakdown = []
@@ -227,6 +240,19 @@ def calculate_signal_strength(indicators: Dict, weekly: Dict) -> Dict:
         breakdown.append('+0: Impulse BLUE - Neutral')
         signals.append('Impulse neutral - caution')
     
+    # Candlestick pattern bonus
+    bullish_patterns = [p for p in patterns if 'bullish' in p.get('type', '')]
+    if bullish_patterns:
+        pattern_names = [p['name'] for p in bullish_patterns]
+        best_reliability = max(p.get('reliability', 1) for p in bullish_patterns)
+        if best_reliability >= 4:
+            score += 2
+            breakdown.append(f'+2: Strong bullish pattern ({", ".join(pattern_names)})')
+        else:
+            score += 1
+            breakdown.append(f'+1: Bullish pattern ({", ".join(pattern_names)})')
+        signals.append(f'🕯️ Candlestick: {", ".join(pattern_names)}')
+    
     # Ensure score is within bounds
     score = max(0, min(10, score))
     
@@ -291,7 +317,7 @@ def calculate_trade_levels(price: float, atr: float, target_rr: float = 2.0) -> 
     }
 
 
-def scan_stock(symbol: str) -> Optional[Dict]:
+def scan_stock(symbol: str, config: Dict = None) -> Optional[Dict]:
     """
     Complete analysis of a single stock
     
@@ -299,15 +325,20 @@ def scan_stock(symbol: str) -> Optional[Dict]:
     1. Data fetch
     2. Weekly trend analysis (Screen 1)
     3. Daily indicator calculation (Screen 2)
-    4. Signal strength scoring
-    5. Trade level calculation
+    4. Candlestick pattern recognition
+    5. Signal strength scoring
+    6. Trade level calculation
     
     Args:
         symbol: Stock ticker
+        config: Optional indicator configuration (uses default if None)
     
     Returns:
         Complete analysis dictionary or None if failed
     """
+    if config is None:
+        config = DEFAULT_INDICATOR_CONFIG
+    
     # Fetch data
     data = fetch_stock_data(symbol)
     if not data:
@@ -326,8 +357,13 @@ def scan_stock(symbol: str) -> Optional[Dict]:
         hist['Volume']
     )
     
+    # Candlestick patterns
+    patterns = scan_patterns(hist)
+    bullish_patterns = get_bullish_patterns(patterns)
+    pattern_score = get_pattern_score(patterns)
+    
     # Calculate signal strength
-    scoring = calculate_signal_strength(indicators, weekly)
+    scoring = calculate_signal_strength(indicators, weekly, patterns)
     
     # Calculate trade levels
     levels = calculate_trade_levels(indicators['price'], indicators['atr'])
@@ -369,6 +405,13 @@ def scan_stock(symbol: str) -> Optional[Dict]:
         'bullish_divergence_macd': indicators['bullish_divergence_macd'],
         'bullish_divergence_rsi': indicators['bullish_divergence_rsi'],
         
+        # Candlestick Patterns
+        'candlestick_patterns': patterns,
+        'bullish_patterns': bullish_patterns,
+        'pattern_names': [p['name'] for p in patterns],
+        'bullish_pattern_names': [p['name'] for p in bullish_patterns],
+        'pattern_score': pattern_score,
+        
         # Scoring
         'signal_strength': scoring['signal_strength'],
         'grade': scoring['grade'],
@@ -383,7 +426,10 @@ def scan_stock(symbol: str) -> Optional[Dict]:
         'target_1': levels['target_1'],
         'target_2': levels['target_2'],
         'risk_percent': levels['risk_percent'],
-        'risk_reward': levels['risk_reward']
+        'risk_reward': levels['risk_reward'],
+        
+        # Indicator Config Used
+        'indicator_config': config.get('name', 'Custom')
     }
 
 

@@ -10,6 +10,14 @@ import json
 from ..models.database import get_database
 from ..services.screener import run_weekly_screen, run_daily_screen, scan_stock
 from ..services.indicators import get_grading_criteria
+from ..services.indicator_config import (
+    INDICATOR_CATALOG,
+    DEFAULT_INDICATOR_CONFIG,
+    ALTERNATIVE_CONFIGS,
+    get_indicator_info,
+    get_config_summary
+)
+from ..services.candlestick_patterns import CANDLESTICK_PATTERNS
 
 api = Blueprint('api', __name__, url_prefix='/api')
 
@@ -170,6 +178,82 @@ def get_criteria():
             'avoid': 'Signal Strength ≤ 0 OR Impulse RED'
         }
     })
+
+
+# ============ INDICATOR CONFIGURATION ============
+@api.route('/indicators/catalog', methods=['GET'])
+def get_indicator_catalog():
+    """Get full indicator catalog with all options per category"""
+    return jsonify(INDICATOR_CATALOG)
+
+
+@api.route('/indicators/category/<category>', methods=['GET'])
+def get_category_indicators(category):
+    """Get indicators for a specific category"""
+    category = category.upper()
+    if category in INDICATOR_CATALOG:
+        return jsonify({
+            'category': category,
+            **INDICATOR_CATALOG[category]
+        })
+    return jsonify({'error': f'Unknown category: {category}'}), 404
+
+
+@api.route('/indicators/configs', methods=['GET'])
+def get_indicator_configs():
+    """Get all available indicator configurations"""
+    return jsonify({
+        'default': DEFAULT_INDICATOR_CONFIG,
+        'alternatives': ALTERNATIVE_CONFIGS
+    })
+
+
+@api.route('/indicators/config/<config_name>', methods=['GET'])
+def get_indicator_config(config_name):
+    """Get a specific indicator configuration"""
+    if config_name == 'default':
+        return jsonify(DEFAULT_INDICATOR_CONFIG)
+    elif config_name in ALTERNATIVE_CONFIGS:
+        return jsonify(ALTERNATIVE_CONFIGS[config_name])
+    return jsonify({'error': f'Unknown config: {config_name}'}), 404
+
+
+@api.route('/indicators/recommended', methods=['GET'])
+def get_recommended_indicators():
+    """Get Elder's recommended indicators"""
+    recommended = {}
+    for category, data in INDICATOR_CATALOG.items():
+        for ind_id, ind_data in data['indicators'].items():
+            if ind_data.get('recommended'):
+                recommended[ind_id] = {
+                    'category': category,
+                    'category_description': data['description'],
+                    **ind_data
+                }
+    return jsonify(recommended)
+
+
+# ============ CANDLESTICK PATTERNS ============
+@api.route('/patterns/catalog', methods=['GET'])
+def get_pattern_catalog():
+    """Get all candlestick patterns"""
+    return jsonify(CANDLESTICK_PATTERNS)
+
+
+@api.route('/patterns/bullish', methods=['GET'])
+def get_bullish_patterns():
+    """Get bullish candlestick patterns only"""
+    bullish = {k: v for k, v in CANDLESTICK_PATTERNS.items() 
+               if 'bullish' in v.get('type', '')}
+    return jsonify(bullish)
+
+
+@api.route('/patterns/bearish', methods=['GET'])
+def get_bearish_patterns():
+    """Get bearish candlestick patterns only"""
+    bearish = {k: v for k, v in CANDLESTICK_PATTERNS.items() 
+               if 'bearish' in v.get('type', '')}
+    return jsonify(bearish)
 
 
 @api.route('/screener/weekly/latest', methods=['GET'])

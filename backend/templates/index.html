@@ -206,6 +206,29 @@
                             </table>
                         </div>
                     </div>
+
+                    <!-- Indicator Configuration Info -->
+                    <div class="bg-[#111827] rounded-xl p-4 border border-gray-700 mt-4">
+                        <h3 class="font-bold mb-2">📊 Current Indicator Configuration</h3>
+                        <div class="grid grid-cols-3 gap-4 text-sm">
+                            <div>
+                                <p class="text-gray-500">Screen 1 (Weekly)</p>
+                                <p>Trend: <span class="text-blue-400">EMA 22</span></p>
+                                <p>Momentum: <span class="text-blue-400">MACD Histogram</span></p>
+                            </div>
+                            <div>
+                                <p class="text-gray-500">Screen 2 (Daily)</p>
+                                <p>Oscillator 1: <span class="text-green-400">Force Index</span></p>
+                                <p>Oscillator 2: <span class="text-green-400">Stochastic</span></p>
+                            </div>
+                            <div>
+                                <p class="text-gray-500">Screen 3 (Entry)</p>
+                                <p>Volatility: <span class="text-yellow-400">ATR</span></p>
+                                <p>Impulse: <span class="text-yellow-400">Elder Impulse</span></p>
+                            </div>
+                        </div>
+                        <button onclick="showIndicatorConfig()" class="mt-3 text-xs text-blue-400 hover:underline">View all available indicators →</button>
+                    </div>
                 ` : `
                     <div class="text-center py-20 text-gray-500">
                         <div class="text-6xl mb-4">🔍</div>
@@ -231,6 +254,9 @@
 
     function showDetail(stock) {
         document.getElementById('modal').classList.remove('hidden');
+        const patterns = stock.pattern_names || [];
+        const bullishPatterns = stock.bullish_pattern_names || [];
+        
         document.getElementById('modal-body').innerHTML = `
             <div class="p-6">
                 <div class="flex justify-between items-start mb-6">
@@ -243,7 +269,7 @@
 
                 <div class="grid grid-cols-2 gap-6">
                     <div>
-                        <h3 class="font-bold text-lg mb-3 text-blue-400">📊 Current Values</h3>
+                        <h3 class="font-bold text-lg mb-3 text-blue-400">📊 Indicator Values</h3>
                         <div class="space-y-2 bg-[#1f2937] rounded-lg p-4">
                             <div class="flex justify-between"><span class="text-gray-400">Price</span><span class="font-mono">$${stock.price?.toFixed(2)}</span></div>
                             <div class="flex justify-between"><span class="text-gray-400">EMA 22</span><span class="font-mono">$${stock.ema_22?.toFixed(2)}</span></div>
@@ -253,6 +279,24 @@
                             <div class="flex justify-between"><span class="text-gray-400">Stochastic</span><span class="font-mono">${stock.stochastic?.toFixed(1)}</span></div>
                             <div class="flex justify-between"><span class="text-gray-400">RSI</span><span class="font-mono">${stock.rsi?.toFixed(1)}</span></div>
                             <div class="flex justify-between"><span class="text-gray-400">ATR</span><span class="font-mono">$${stock.atr?.toFixed(2)}</span></div>
+                        </div>
+
+                        <h3 class="font-bold text-lg mb-3 mt-6 text-purple-400">🕯️ Candlestick Patterns</h3>
+                        <div class="bg-[#1f2937] rounded-lg p-4">
+                            ${patterns.length > 0 ? `
+                                <div class="space-y-2">
+                                    ${patterns.map(p => `
+                                        <div class="flex items-center gap-2">
+                                            <span class="${bullishPatterns.includes(p) ? 'text-green-400' : 'text-red-400'}">
+                                                ${bullishPatterns.includes(p) ? '🟢' : '🔴'}
+                                            </span>
+                                            <span>${p}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            ` : `
+                                <p class="text-gray-500">No significant patterns detected</p>
+                            `}
                         </div>
                     </div>
 
@@ -478,6 +522,40 @@
         settings = await api('GET', '/settings');
         renderHeader();
         toast('Settings saved!', 'success');
+    }
+
+    // ========== INDICATOR CONFIG ==========
+    async function showIndicatorConfig() {
+        const catalog = await api('GET', '/indicators/catalog');
+        document.getElementById('modal').classList.remove('hidden');
+        document.getElementById('modal-body').innerHTML = `
+            <div class="p-6">
+                <div class="flex justify-between items-start mb-6">
+                    <h2 class="text-2xl font-bold">📊 Available Indicators</h2>
+                    <button onclick="closeModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+                </div>
+                <p class="text-gray-500 mb-6">These are all indicators available in each category. The <span class="text-green-400">★ recommended</span> ones are Elder's original choices.</p>
+                
+                ${Object.entries(catalog).map(([cat, data]) => `
+                    <div class="mb-6">
+                        <h3 class="font-bold text-lg text-blue-400">${cat}</h3>
+                        <p class="text-gray-500 text-sm mb-2">${data.description} — ${data.usage}</p>
+                        <div class="grid grid-cols-2 gap-2">
+                            ${Object.entries(data.indicators).map(([id, ind]) => `
+                                <div class="bg-[#1f2937] p-3 rounded-lg ${ind.recommended ? 'border border-green-500/30' : ''}">
+                                    <div class="flex items-center gap-2">
+                                        ${ind.recommended ? '<span class="text-green-400">★</span>' : ''}
+                                        <span class="font-medium">${ind.name}</span>
+                                        ${ind.elder_original ? '<span class="text-xs bg-blue-500/20 text-blue-400 px-1 rounded">Elder</span>' : ''}
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-1">${ind.description}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
     }
 
     // ========== INIT ==========
