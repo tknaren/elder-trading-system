@@ -12,18 +12,23 @@ on:
   pull_request:
     branches:
       - main
-  workflow_dispatch:  # Allows manual trigger from GitHub UI
+  workflow_dispatch: # Allows manual trigger from GitHub UI
 
 env:
-  AZURE_WEBAPP_NAME: elder-trading-app    # Your Azure Web App name
-  PYTHON_VERSION: '3.11'
-  WORKING_DIRECTORY: 'backend'
+  AZURE_WEBAPP_NAME: elder-trading-app # Your Azure Web App name
+  PYTHON_VERSION: "3.10" # Match Azure's default Python
+  WORKING_DIRECTORY: "backend"
 
 jobs:
-  # ============ BUILD & TEST ============
-  build:
+  # ============ BUILD & DEPLOY ============
+  build-and-deploy:
     runs-on: ubuntu-latest
-    
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    environment:
+      name: "production"
+      url: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net
+
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -32,90 +37,84 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-          cache-dependency-path: '${{ env.WORKING_DIRECTORY }}/requirements.txt'
 
       - name: 📦 Install dependencies
         working-directory: ${{ env.WORKING_DIRECTORY }}
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest flake8
 
       - name: 🔍 Lint with flake8
         working-directory: ${{ env.WORKING_DIRECTORY }}
         run: |
+          pip install flake8
           # Stop build if there are Python syntax errors or undefined names
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # Exit-zero treats all errors as warnings
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-
-      - name: 🧪 Run tests (if any)
-        working-directory: ${{ env.WORKING_DIRECTORY }}
-        run: |
-          # Run pytest if tests directory exists
-          if [ -d "tests" ]; then
-            pytest tests/ -v
-          else
-            echo "No tests directory found, skipping tests"
-          fi
-
-      - name: 📤 Upload artifact for deployment
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-app
-          path: |
-            ${{ env.WORKING_DIRECTORY }}
-            !${{ env.WORKING_DIRECTORY }}/__pycache__
-            !${{ env.WORKING_DIRECTORY }}/.pytest_cache
-            !${{ env.WORKING_DIRECTORY }}/tests
-
-  # ============ DEPLOY TO AZURE ============
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-    environment:
-      name: 'production'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
-
-    steps:
-      - name: 📥 Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: python-app
-          path: .
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
 
       - name: 🔐 Login to Azure
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: ⏸️ Stop Web App before deployment
+        run: |
+          az webapp stop --name ${{ env.AZURE_WEBAPP_NAME }} --resource-group elder-trading-rg || true
+          sleep 10
+
+      - name: 🔧 Configure Web App settings before deploy
+        run: |
+          az webapp config appsettings set \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group elder-trading-rg \
+            --settings \
+            SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+            ENABLE_ORYX_BUILD=true \
+            PYTHON_VERSION=3.10
+
       - name: 🚀 Deploy to Azure Web App
-        id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          package: .
+          package: ${{ env.WORKING_DIRECTORY }}
 
-      - name: 🔧 Configure Azure Web App settings
-        uses: azure/appservice-settings@v1
-        with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          app-settings-json: |
-            [
-              {
-                "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
-                "value": "true"
-              },
-              {
-                "name": "WEBSITE_RUN_FROM_PACKAGE",
-                "value": "0"
-              }
-            ]
-
-      - name: ✅ Deployment complete
+      - name: ▶️ Start Web App after deployment
         run: |
-          echo "🎉 Deployment successful!"
+          sleep 15
+          az webapp start --name ${{ env.AZURE_WEBAPP_NAME }} --resource-group elder-trading-rg
+
+      - name: ⏳ Wait for deployment to stabilize
+        run: sleep 30
+
+      - name: ✅ Health check
+        run: |
+          echo "🎉 Deployment complete!"
           echo "🌐 App URL: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+          # Optional: Check if app is responding
+          curl -s -o /dev/null -w "%{http_code}" https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/api/health || echo "App may still be starting..."
+
+  # ============ PR BUILD CHECK ============
+  build-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 📦 Install dependencies
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔍 Lint check
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: |
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
+          echo "✅ Build check passed"

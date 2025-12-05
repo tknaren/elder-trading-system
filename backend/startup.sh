@@ -1,18 +1,16 @@
 #!/bin/bash
 
 # ============================================
-# Elder Trading System - Azure Deployment Script
+# Elder Trading System - Azure Startup Script
 # ============================================
 
 echo "🚀 Starting Elder Trading System..."
 
-# Create data directory (Required for SQLite persistence)
+# Create data directory for SQLite
 mkdir -p /home/data
 
-# Initialize database
-# Note: We run this in the background or ensure it's idempotent
-python -c "from app import init_db, app; app.app_context().push(); init_db()"
+# Set environment variables
+export DATABASE_PATH=${DATABASE_PATH:-/home/data/elder_trading.db}
 
 # Start the application with Gunicorn
-# Azure looks for the app on port 8000 by default
-gunicorn --bind=0.0.0.0:8000 --workers=2 --timeout=120 app:app
+exec gunicorn --bind=0.0.0.0:8000 --workers=2 --timeout=120 --access-logfile=- --error-logfile=- app:app
