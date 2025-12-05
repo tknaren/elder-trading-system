@@ -33,7 +33,6 @@ from services.indicator_config import (
 yf.pdr_read = None  # Disable deprecated pandas_datareader
 
 
-
 # Default watchlists
 NASDAQ_100_TOP = [
     'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'AMD', 'AVGO', 'NFLX',
@@ -69,16 +68,17 @@ def fetch_stock_data(symbol: str, period: str = '6mo', retries: int = 3) -> Opti
                 symbol,
                 session=None
             )
-            
+
             # Fetch history with timeout handling
             hist = ticker.history(period=period, timeout=10)
 
             if hist is None or hist.empty or len(hist) < 30:
-                print(f"{symbol}: No price data found, symbol may be delisted (period={period})")
+                print(
+                    f"{symbol}: No price data found, symbol may be delisted (period={period})")
                 return None
 
             info = ticker.info
-            
+
             # Verify we have valid data
             if info is None or not isinstance(info, dict):
                 print(f"{symbol}: Invalid ticker info received")
@@ -95,7 +95,8 @@ def fetch_stock_data(symbol: str, period: str = '6mo', retries: int = 3) -> Opti
                 'info': info
             }
         except Exception as e:
-            print(f"Attempt {attempt + 1}/{retries}: Failed to get ticker '{symbol}' reason: {e}")
+            print(
+                f"Attempt {attempt + 1}/{retries}: Failed to get ticker '{symbol}' reason: {e}")
             if attempt < retries - 1:
                 time.sleep(1 + attempt)  # Progressive backoff
             else:
@@ -484,8 +485,9 @@ def run_weekly_screen(market: str = 'US', symbols: List[str] = None) -> Dict:
     passed = []
     failed_symbols = []
 
-    print(f"Starting weekly screen for {market} market with {len(symbols)} symbols...")
-    
+    print(
+        f"Starting weekly screen for {market} market with {len(symbols)} symbols...")
+
     for idx, symbol in enumerate(symbols):
         try:
             print(f"[{idx+1}/{len(symbols)}] Scanning {symbol}...")
@@ -500,7 +502,7 @@ def run_weekly_screen(market: str = 'US', symbols: List[str] = None) -> Dict:
         except Exception as e:
             print(f"  → Error scanning {symbol}: {e}")
             failed_symbols.append(symbol)
-        
+
         # Rate limiting - pause between requests to avoid overwhelming Yahoo Finance
         if idx < len(symbols) - 1:
             time.sleep(0.5)
@@ -515,7 +517,8 @@ def run_weekly_screen(market: str = 'US', symbols: List[str] = None) -> Dict:
     watch = [r for r in results if r['grade'] == 'C']
     avoid = [r for r in results if r['grade'] == 'AVOID']
 
-    print(f"Weekly scan complete: {len(results)}/{len(symbols)} stocks analyzed successfully")
+    print(
+        f"Weekly scan complete: {len(results)}/{len(symbols)} stocks analyzed successfully")
     print(f"Failed symbols: {failed_symbols}")
 
     return {
@@ -565,7 +568,7 @@ def run_daily_screen(weekly_results: List[Dict]) -> Dict:
     failed_symbols = []
 
     print(f"Starting daily screen on {len(symbols)} symbols...")
-    
+
     for idx, symbol in enumerate(symbols):
         try:
             print(f"[{idx+1}/{len(symbols)}] Daily scan {symbol}...")
@@ -585,7 +588,7 @@ def run_daily_screen(weekly_results: List[Dict]) -> Dict:
         except Exception as e:
             print(f"  → Error scanning {symbol}: {e}")
             failed_symbols.append(symbol)
-        
+
         # Rate limiting
         if idx < len(symbols) - 1:
             time.sleep(0.5)
@@ -594,8 +597,9 @@ def run_daily_screen(weekly_results: List[Dict]) -> Dict:
     results.sort(key=lambda x: x['signal_strength'], reverse=True)
 
     a_trades = [r for r in results if r['is_a_trade']]
-    
-    print(f"Daily scan complete: {len(results)}/{len(symbols)} stocks analyzed successfully")
+
+    print(
+        f"Daily scan complete: {len(results)}/{len(symbols)} stocks analyzed successfully")
 
     return {
         'scan_date': datetime.now().isoformat(),

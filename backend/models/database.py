@@ -12,7 +12,7 @@ from typing import Optional, List, Dict
 
 class Database:
     """Database connection manager"""
-    
+
     def __init__(self, db_path: str = None):
         if db_path is None:
             db_path = os.environ.get('DATABASE_PATH', '')
@@ -21,11 +21,11 @@ class Database:
                     db_path = '/home/data/elder_trading.db'
                 else:
                     db_path = 'elder_trading.db'
-        
+
         self.db_path = db_path
         self._ensure_directory()
         self._init_db()
-    
+
     def _ensure_directory(self):
         """Ensure database directory exists"""
         try:
@@ -34,13 +34,13 @@ class Database:
                 os.makedirs(db_dir, exist_ok=True)
         except Exception as e:
             print(f"Warning: Could not create db directory: {e}")
-    
+
     def get_connection(self):
         """Get database connection"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
-    
+
     def _init_db(self):
         """Initialize database schema"""
         conn = self.get_connection()
@@ -195,23 +195,23 @@ class Database:
         ''')
         conn.commit()
         conn.close()
-        
+
         # Run migrations
         self._run_migrations()
-        
+
         # Initialize default data
         self._init_defaults()
-    
+
     def _run_migrations(self):
         """Run database migrations to update schema"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        
+
         try:
             # Check if summary column exists in weekly_scans
             cursor.execute("PRAGMA table_info(weekly_scans)")
             columns = [row[1] for row in cursor.fetchall()]
-            
+
             if 'summary' not in columns:
                 print("Migrating: Adding 'summary' column to weekly_scans table...")
                 cursor.execute('''
@@ -224,25 +224,24 @@ class Database:
             print(f"Migration error: {e}")
         finally:
             conn.close()
-    
-    
+
     def _init_defaults(self):
         """Initialize default user, strategies, and watchlists"""
         conn = self.get_connection()
-        
+
         # Check if defaults exist
         cursor = conn.execute('SELECT COUNT(*) FROM users')
         if cursor.fetchone()[0] == 0:
             from werkzeug.security import generate_password_hash
-            
+
             # Create default user
             conn.execute('''
                 INSERT INTO users (username, password_hash)
                 VALUES (?, ?)
             ''', ('default', generate_password_hash('elder2024')))
-            
+
             user_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-            
+
             # Create default strategy
             elder_config = {
                 "name": "Elder Triple Screen",
@@ -252,16 +251,17 @@ class Database:
                     "daily": ["Force_Index_2", "Stochastic_14", "EMA_22", "Impulse"]
                 }
             }
-            
+
             conn.execute('''
                 INSERT INTO strategies (user_id, name, description, config)
                 VALUES (?, ?, ?, ?)
-            ''', (user_id, 'Elder Triple Screen', 
+            ''', (user_id, 'Elder Triple Screen',
                   "Dr. Alexander Elder's Triple Screen Trading System",
                   json.dumps(elder_config)))
-            
-            strategy_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-            
+
+            strategy_id = conn.execute(
+                'SELECT last_insert_rowid()').fetchone()[0]
+
             # APGAR parameters
             apgar_params = [
                 ('weekly_ema', 'Weekly EMA (22) Slope', [
@@ -290,53 +290,54 @@ class Database:
                     {"score": 0, "label": "Far Above"}
                 ])
             ]
-            
+
             for i, (name, label, options) in enumerate(apgar_params):
                 conn.execute('''
                     INSERT INTO apgar_parameters 
                     (strategy_id, parameter_name, parameter_label, options, display_order)
                     VALUES (?, ?, ?, ?, ?)
                 ''', (strategy_id, name, label, json.dumps(options), i))
-            
+
             # Default watchlists
-            nasdaq_100 = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 
-                          'AMD', 'AVGO', 'NFLX', 'COST', 'PEP', 'ADBE', 'CSCO', 
+            nasdaq_100 = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA',
+                          'AMD', 'AVGO', 'NFLX', 'COST', 'PEP', 'ADBE', 'CSCO',
                           'INTC', 'QCOM', 'TXN', 'INTU', 'AMAT', 'MU']
-            
-            nifty_50 = ['RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 
+
+            nifty_50 = ['RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS',
                         'ICICIBANK.NS', 'HINDUNILVR.NS', 'SBIN.NS', 'BHARTIARTL.NS',
                         'ITC.NS', 'KOTAKBANK.NS', 'LT.NS', 'AXISBANK.NS']
-            
+
             conn.execute('''
                 INSERT INTO watchlists (user_id, name, market, symbols, is_default)
                 VALUES (?, ?, ?, ?, ?)
             ''', (user_id, 'NASDAQ 100', 'US', json.dumps(nasdaq_100), 1))
-            
+
             conn.execute('''
                 INSERT INTO watchlists (user_id, name, market, symbols, is_default)
                 VALUES (?, ?, ?, ?, ?)
             ''', (user_id, 'NIFTY 50', 'IN', json.dumps(nifty_50), 1))
-            
+
             # Default account settings
             conn.execute('''
                 INSERT INTO account_settings 
                 (user_id, account_name, market, trading_capital, currency, broker)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (user_id, 'ISA Account', 'US', 6000, 'GBP', 'Trading212'))
-            
+
             conn.execute('''
                 INSERT INTO account_settings 
                 (user_id, account_name, market, trading_capital, currency, broker)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (user_id, 'Zerodha Account', 'IN', 570749, 'INR', 'Zerodha'))
-            
+
             conn.commit()
-        
+
         conn.close()
 
 
 # Singleton instance
 _db_instance = None
+
 
 def get_database() -> Database:
     """Get database singleton instance"""
