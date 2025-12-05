@@ -1,2 +1,2 @@
 """Elder Trading System - Routes Package"""
-from .api import api
+from routes.api import api

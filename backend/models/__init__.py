@@ -1,2 +1,2 @@
 """Elder Trading System - Models Package"""
-from .database import Database, get_database
+from models.database import Database, get_database

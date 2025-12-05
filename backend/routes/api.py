@@ -7,17 +7,17 @@ from flask import Blueprint, request, jsonify, g
 from datetime import datetime, timedelta
 import json
 
-from ..models.database import get_database
-from ..services.screener import run_weekly_screen, run_daily_screen, scan_stock
-from ..services.indicators import get_grading_criteria
-from ..services.indicator_config import (
+from models.database import get_database
+from services.screener import run_weekly_screen, run_daily_screen, scan_stock
+from services.indicators import get_grading_criteria
+from services.indicator_config import (
     INDICATOR_CATALOG,
     DEFAULT_INDICATOR_CONFIG,
     ALTERNATIVE_CONFIGS,
     get_indicator_info,
     get_config_summary
 )
-from ..services.candlestick_patterns import CANDLESTICK_PATTERNS
+from services.candlestick_patterns import CANDLESTICK_PATTERNS
 
 api = Blueprint('api', __name__, url_prefix='/api')
 

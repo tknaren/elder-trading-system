@@ -14,14 +14,14 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-from .indicators import (
+from services.indicators import (
     calculate_all_indicators, 
     calculate_ema,
     calculate_macd,
     get_grading_criteria
 )
-from .candlestick_patterns import scan_patterns, get_bullish_patterns, get_pattern_score
-from .indicator_config import (
+from services.candlestick_patterns import scan_patterns, get_bullish_patterns, get_pattern_score
+from services.indicator_config import (
     INDICATOR_CATALOG,
     DEFAULT_INDICATOR_CONFIG,
     get_indicator_info,
