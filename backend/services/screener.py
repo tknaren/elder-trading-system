@@ -12,6 +12,7 @@ Features:
 
 import yfinance as yf
 import pandas as pd
+import time
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from services.indicators import (
@@ -27,6 +28,10 @@ from services.indicator_config import (
     get_indicator_info,
     get_config_summary
 )
+
+# Configure yfinance with proper timeout and headers
+yf.pdr_read = None  # Disable deprecated pandas_datareader
+
 
 
 # Default watchlists
@@ -45,36 +50,57 @@ NIFTY_50 = [
 ]
 
 
-def fetch_stock_data(symbol: str, period: str = '6mo') -> Optional[Dict]:
+def fetch_stock_data(symbol: str, period: str = '6mo', retries: int = 3) -> Optional[Dict]:
     """
-    Fetch stock data from Yahoo Finance
+    Fetch stock data from Yahoo Finance with retry logic
 
     Args:
         symbol: Stock ticker symbol
         period: Data period (default 6 months for indicator calculations)
+        retries: Number of retry attempts (default 3)
 
     Returns:
         Dictionary with OHLCV data and info, or None if fetch fails
     """
-    try:
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period=period)
+    for attempt in range(retries):
+        try:
+            # Create ticker with user agent to avoid blocking
+            ticker = yf.Ticker(
+                symbol,
+                session=None
+            )
+            
+            # Fetch history with timeout handling
+            hist = ticker.history(period=period, timeout=10)
 
-        if hist.empty or len(hist) < 30:
-            return None
+            if hist is None or hist.empty or len(hist) < 30:
+                print(f"{symbol}: No price data found, symbol may be delisted (period={period})")
+                return None
 
-        info = ticker.info
+            info = ticker.info
+            
+            # Verify we have valid data
+            if info is None or not isinstance(info, dict):
+                print(f"{symbol}: Invalid ticker info received")
+                if attempt < retries - 1:
+                    time.sleep(1)
+                    continue
+                return None
 
-        return {
-            'symbol': symbol,
-            'name': info.get('shortName', info.get('longName', symbol)),
-            'sector': info.get('sector', 'Unknown'),
-            'history': hist,
-            'info': info
-        }
-    except Exception as e:
-        print(f"Error fetching {symbol}: {e}")
-        return None
+            return {
+                'symbol': symbol,
+                'name': info.get('shortName', info.get('longName', symbol)),
+                'sector': info.get('sector', 'Unknown'),
+                'history': hist,
+                'info': info
+            }
+        except Exception as e:
+            print(f"Attempt {attempt + 1}/{retries}: Failed to get ticker '{symbol}' reason: {e}")
+            if attempt < retries - 1:
+                time.sleep(1 + attempt)  # Progressive backoff
+            else:
+                print(f"Failed to fetch {symbol} after {retries} attempts")
+                return None
 
 
 def analyze_weekly_trend(hist: pd.DataFrame) -> Dict:
@@ -456,13 +482,28 @@ def run_weekly_screen(market: str = 'US', symbols: List[str] = None) -> Dict:
 
     results = []
     passed = []
+    failed_symbols = []
 
-    for symbol in symbols:
-        analysis = scan_stock(symbol)
-        if analysis:
-            results.append(analysis)
-            if analysis['weekly_bullish']:
-                passed.append(analysis)
+    print(f"Starting weekly screen for {market} market with {len(symbols)} symbols...")
+    
+    for idx, symbol in enumerate(symbols):
+        try:
+            print(f"[{idx+1}/{len(symbols)}] Scanning {symbol}...")
+            analysis = scan_stock(symbol)
+            if analysis:
+                results.append(analysis)
+                if analysis['weekly_bullish']:
+                    passed.append(analysis)
+            else:
+                failed_symbols.append(symbol)
+                print(f"  → Failed to analyze {symbol}")
+        except Exception as e:
+            print(f"  → Error scanning {symbol}: {e}")
+            failed_symbols.append(symbol)
+        
+        # Rate limiting - pause between requests to avoid overwhelming Yahoo Finance
+        if idx < len(symbols) - 1:
+            time.sleep(0.5)
 
     # Sort by signal strength
     results.sort(key=lambda x: x['signal_strength'], reverse=True)
@@ -474,11 +515,16 @@ def run_weekly_screen(market: str = 'US', symbols: List[str] = None) -> Dict:
     watch = [r for r in results if r['grade'] == 'C']
     avoid = [r for r in results if r['grade'] == 'AVOID']
 
+    print(f"Weekly scan complete: {len(results)}/{len(symbols)} stocks analyzed successfully")
+    print(f"Failed symbols: {failed_symbols}")
+
     return {
         'scan_date': datetime.now().isoformat(),
         'market': market,
         'total_scanned': len(symbols),
         'total_analyzed': len(results),
+        'total_failed': len(failed_symbols),
+        'failed_symbols': failed_symbols,
         'weekly_bullish_count': len(passed),
 
         'summary': {
@@ -515,28 +561,47 @@ def run_daily_screen(weekly_results: List[Dict]) -> Dict:
         }
 
     symbols = [r['symbol'] for r in weekly_results]
-
     results = []
-    for symbol in symbols:
-        analysis = scan_stock(symbol)
-        if analysis:
-            # Re-check daily conditions
-            daily_ready = (
-                analysis['force_index'] < 0 or
-                analysis['stochastic'] < 50 or
-                analysis['impulse_color'] != 'RED'
-            )
-            analysis['daily_ready'] = daily_ready
-            results.append(analysis)
+    failed_symbols = []
+
+    print(f"Starting daily screen on {len(symbols)} symbols...")
+    
+    for idx, symbol in enumerate(symbols):
+        try:
+            print(f"[{idx+1}/{len(symbols)}] Daily scan {symbol}...")
+            analysis = scan_stock(symbol)
+            if analysis:
+                # Re-check daily conditions
+                daily_ready = (
+                    analysis['force_index'] < 0 or
+                    analysis['stochastic'] < 50 or
+                    analysis['impulse_color'] != 'RED'
+                )
+                analysis['daily_ready'] = daily_ready
+                results.append(analysis)
+            else:
+                failed_symbols.append(symbol)
+                print(f"  → Failed to analyze {symbol}")
+        except Exception as e:
+            print(f"  → Error scanning {symbol}: {e}")
+            failed_symbols.append(symbol)
+        
+        # Rate limiting
+        if idx < len(symbols) - 1:
+            time.sleep(0.5)
 
     # Sort by signal strength
     results.sort(key=lambda x: x['signal_strength'], reverse=True)
 
     a_trades = [r for r in results if r['is_a_trade']]
+    
+    print(f"Daily scan complete: {len(results)}/{len(symbols)} stocks analyzed successfully")
 
     return {
         'scan_date': datetime.now().isoformat(),
         'stocks_from_weekly': len(symbols),
+        'total_analyzed': len(results),
+        'failed_symbols': failed_symbols,
         'daily_ready_count': len([r for r in results if r.get('daily_ready')]),
         'a_trades': a_trades,
         'all_results': results

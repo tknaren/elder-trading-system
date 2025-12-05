@@ -196,8 +196,35 @@ class Database:
         conn.commit()
         conn.close()
         
+        # Run migrations
+        self._run_migrations()
+        
         # Initialize default data
         self._init_defaults()
+    
+    def _run_migrations(self):
+        """Run database migrations to update schema"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Check if summary column exists in weekly_scans
+            cursor.execute("PRAGMA table_info(weekly_scans)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'summary' not in columns:
+                print("Migrating: Adding 'summary' column to weekly_scans table...")
+                cursor.execute('''
+                    ALTER TABLE weekly_scans 
+                    ADD COLUMN summary JSON DEFAULT NULL
+                ''')
+                conn.commit()
+                print("Migration complete: 'summary' column added")
+        except Exception as e:
+            print(f"Migration error: {e}")
+        finally:
+            conn.close()
+    
     
     def _init_defaults(self):
         """Initialize default user, strategies, and watchlists"""
